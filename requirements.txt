@@ -1,0 +1,17 @@
+# Core LLM SDK (Google Gemini - free tier via https://aistudio.google.com/apikey)
+google-genai>=1.20.0
+
+# Web research (DuckDuckGo - no API key required)
+ddgs>=6.0.0
+trafilatura>=1.12.0
+requests>=2.32.0
+beautifulsoup4>=4.12.3
+
+# Web UI
+streamlit>=1.36.0
+
+# Document export
+python-docx>=1.1.2
+
+# Environment
+python-dotenv>=1.0.1
