@@ -1,0 +1,490 @@
+"""Negotiation mode — for the Diplomatic Negotiation Challenge.
+
+Two capabilities:
+1. PLAYBOOK: paste a scenario brief (or topic) -> deep research -> a full
+   strategy playbook: stakeholder map, ranked objectives with BATNA/reservation
+   points, concession ladder, coalition plan, evidence-backed argument bank,
+   crisis contingencies, draft agreement skeleton, diplomatic phrases, and a
+   one-page quick-reference card.
+2. PRACTICE GENERATOR: creates realistic practice matches (shared brief + two
+   confidential team briefs + judge's solution note) calibrated to the four
+   tournament difficulty levels.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+
+from .llm import extract_json
+from .research import Source, build_digest
+from .writer import STYLE_GUIDE, build_references, word_count
+
+NEG_VOICE = """\
+CONTEXT OF THIS DOCUMENT
+This is a negotiation strategy playbook for a diplomatic simulation judged on:
+consensus-building, realism, implementability, adaptability and professional
+diplomacy — NOT on stubbornly defending a position. Write for a negotiator who
+has minutes to absorb this before walking to the table. Be concrete and
+actionable: named moves, specific numbers, exact phrases. Every factual claim
+about the real world must cite the evidence digest.
+"""
+
+
+# --------------------------------------------------------------------------
+# Metadata
+# --------------------------------------------------------------------------
+
+@dataclass
+class NegoMeta:
+    scenario_title: str = ""
+    brief_text: str = ""              # pasted round brief (may be short topic)
+    your_stakeholder: str = ""
+    other_parties: str = ""
+    round_name: str = ""
+    team_members: str = ""
+    institution: str = ""
+    time_limit: str = ""
+    region: str = "South Asia"
+    keywords: list[str] = field(default_factory=list)
+    word_count: int = 0
+    topic: str = ""                   # fallback title source
+
+    def title_or_default(self) -> str:
+        return self.scenario_title.strip() or self.topic.strip().rstrip(".") or "Negotiation Playbook"
+
+
+# --------------------------------------------------------------------------
+# Stage A — understand the scenario
+# --------------------------------------------------------------------------
+
+_ANALYZE_PROMPT = """You are a veteran diplomat briefing a young negotiator.
+
+The negotiator received this scenario material:
+\"\"\"
+{brief}
+\"\"\"
+{extra}
+
+Respond with ONLY minified JSON:
+{{
+ "title": "short scenario title, max 10 words",
+ "summary": "2-3 sentence neutral summary of the situation",
+ "issue_areas": ["3-6 issue areas at stake"],
+ "parties": ["stakeholders likely at the table, include the negotiator's own side if identifiable"],
+ "stakes": "one sentence on why this matters / what failure costs",
+ "real_world_analogs": ["1-3 real treaties/disputes this resembles"],
+ "keywords": ["6-8 research phrases to find facts, treaties, data and past negotiation outcomes on this kind of dispute"],
+ "your_side_hint": "the negotiator's stakeholder as best inferred, or empty"
+}}"""
+
+
+def analyze_scenario(brief: str, your_stakeholder: str, other_parties: str, region: str, llm) -> dict:
+    extra_bits = []
+    if your_stakeholder:
+        extra_bits.append(f"The negotiator represents: {your_stakeholder}")
+    if other_parties:
+        extra_bits.append(f"Other parties at the table: {other_parties}")
+    if region:
+        extra_bits.append(f"Regional context: {region}")
+    prompt = _ANALYZE_PROMPT.format(brief=brief[:6000], extra="\n".join(extra_bits))
+    try:
+        data = llm.generate_json(prompt, max_output_tokens=4096)
+        if not isinstance(data, dict) or "title" not in data:
+            raise ValueError("bad analysis payload")
+        return data
+    except Exception:  # noqa: BLE001
+        return {
+            "title": brief.strip().splitlines()[0][:80] if brief.strip() else "Negotiation Scenario",
+            "summary": brief.strip()[:400],
+            "issue_areas": [],
+            "parties": [p.strip() for p in other_parties.split(",") if p.strip()],
+            "stakes": "",
+            "real_world_analogs": [],
+            "keywords": [brief.strip()[:60]] if brief.strip() else [],
+            "your_side_hint": your_stakeholder,
+        }
+
+
+# --------------------------------------------------------------------------
+# Stage B — research queries tuned for negotiation prep
+# --------------------------------------------------------------------------
+
+_QUERY_PROMPT = """You are a research chief for a diplomatic negotiation team.
+
+Scenario: {title}
+Summary: {summary}
+Your side: {side}
+Other parties: {parties}
+Region: {region}
+Real-world analogs: {analogs}
+
+Generate {n} high-value web search queries to arm negotiators with facts:
+- hard data and statistics on the core issue (latest available)
+- the real treaties/agreements named as analogs (their key provisions + how disputes were settled)
+- the real geopolitical/economic interests of countries resembling the parties
+- past negotiation outcomes and what made them succeed or fail
+- enabling legal frameworks (international conventions, UN resolutions)
+
+Phrase queries precisely. Respond with ONLY minified JSON: {{"queries":["..."]}}"""
+
+
+def negotiation_queries(analysis: dict, side: str, parties: str, region: str, n: int, llm) -> list[str]:
+    prompt = _QUERY_PROMPT.format(
+        title=analysis.get("title", ""),
+        summary=analysis.get("summary", ""),
+        side=side or analysis.get("your_side_hint", ""),
+        parties=parties or ", ".join(analysis.get("parties", [])),
+        region=region,
+        analogs=", ".join(analysis.get("real_world_analogs", [])) or "none known",
+        n=n,
+    )
+    llm_qs: list[str] = []
+    try:
+        raw = llm.generate(prompt, temperature=0.4, max_output_tokens=4096)
+        llm_qs = [q for q in extract_json(raw).get("queries", []) if str(q).strip()]
+    except Exception:  # noqa: BLE001
+        pass
+    base = []
+    for kw in (analysis.get("keywords") or [])[:4]:
+        base.append(str(kw))
+    title = analysis.get("title", "")
+    if title:
+        base += [f"{title} treaty agreement", f"{title} latest data 2025"]
+    seen, out = set(), []
+    for q in llm_qs + base:
+        k = str(q).strip().lower()
+        if k and k not in seen:
+            seen.add(k)
+            out.append(str(q).strip())
+    return out[: max(n, 5)]
+
+
+# --------------------------------------------------------------------------
+# Stage C — the playbook sections
+# --------------------------------------------------------------------------
+
+PLAYBOOK_SECTIONS: list[dict] = [
+    {
+        "key": "exec_landscape",
+        "number": "1",
+        "title": "The Situation — Read First",
+        "word_min": 420, "word_max": 640,
+        "guidance": """Two parts (no sub-headings):
+First, an EXECUTIVE BRIEF (4-6 sentences): what this negotiation is about, who sits at the table, what your side needs, and the single most important objective. A reader must grasp the whole game from this.
+Then THE LANDSCAPE: the hard facts the room will argue over — key statistics with citations, what is driving urgency now, relevant history (past agreements and why they failed or held), and 1-2 real-world analog outcomes with citations. Facts win arguments; make this section quotable.""",
+    },
+    {
+        "key": "stakeholders",
+        "number": "2",
+        "title": "Stakeholder Map",
+        "word_min": 250, "word_max": 420,
+        "guidance": """Map every party at the table. Present a markdown table with EXACTLY these columns:
+| Party | Core interests | Red lines | Leverage / pressure points | Probable opening stance |
+Then add one short paragraph per party (or cluster) reading their deeper motivations — what they cannot say aloud but are actually optimizing for, and which of their interests secretly aligns with yours. End with 2-3 sentences on where the Zone of Possible Agreement (ZOPA) most plausibly lies.""",
+    },
+    {
+        "key": "position",
+        "number": "3",
+        "title": "Your Position: Objectives, BATNA & Walk-aways",
+        "word_min": 350, "word_max": 550,
+        "guidance": """Written for the negotiator's OWN side. Use three sub-headings:
+### Ranked Objectives
+A numbered list of 5-7 objectives split into three tiers: MUST-WIN (walk away without these), DESIRABLE (push hard, trade late if needed), TRADABLE (currency for concessions). Phrase each concretely (numbers, dates, mechanisms).
+### Your BATNA
+Your best alternative to a negotiated agreement — what your side realistically does if this round fails, and how strong that fallback is. One short paragraph; then ONE sentence on the opponent's likely BATNA and its weakness.
+### Red Lines & Reservation Points
+Bullet list: the lines you never cross, and for each, the fallback formulation (a softer clause you could live with). Note which red lines you should keep private vs declare early.""",
+    },
+    {
+        "key": "strategy",
+        "number": "4",
+        "title": "Negotiation Strategy & Concession Ladder",
+        "word_min": 500, "word_max": 800,
+        "guidance": """The operational core. Use four sub-headings:
+### Opening Stance
+What to open with (position + rationale + tone), and the first 2 minutes essentially scripted: your framing of the problem so the room adopts your vocabulary.
+### The Concession Ladder
+A numbered ladder of 5-8 moves, each step formatted as: 'Give X -> demand Y in return -> deploy when [early/mid/late]'. Rules baked into the list: descend slowly, never concede unilaterally, always pair a give with a get, save one 'surprise' concession for the endgame.
+### Package Deals
+2-3 bundled offers that trade across issue areas (log-rolling), each with the rationale for why every party can claim a win from the bundle.
+### Time & Process Management
+How to pace the negotiation within the time limit, when to call a caucus/side-meeting, how to force drafting (offer to write the communiqué — drafters control the deal), and how to close.""",
+    },
+    {
+        "key": "coalitions_arguments",
+        "number": "5",
+        "title": "Coalitions, Arguments & Rebuttals",
+        "word_min": 550, "word_max": 850,
+        "guidance": """Two sub-headings:
+### Coalition Plan
+Who to ally with, who is persuadable, who to politely isolate — with the specific offer that buys each ally. A short markdown table (Party | Relationship goal | What you offer them | What you ask) plus one paragraph on sequencing the wooing.
+### Argument Bank
+8-12 arguments formatted as a markdown table with EXACTLY these columns:
+| # | Argument (one line) | Evidence (cite digest) | Best deployed against | Likely counter | Your rebuttal |
+Every evidence cell must carry a citation key from the digest. After the table, expand your THREE strongest arguments into short paragraphs (the knockout hits you lead with), including exact numbers and their sources.""",
+    },
+    {
+        "key": "contingencies_closing",
+        "number": "6",
+        "title": "Contingencies, Draft Agreement & Closing Kit",
+        "word_min": 550, "word_max": 850,
+        "guidance": """Three sub-headings:
+### Crisis Contingencies
+A markdown table (Trigger | Your move | Why it works) covering 5-6 crises: opponent walkout, surprise demand, public grandstanding, an inject/new fact revealed mid-round, time running out with no deal, and an ally defecting.
+### Draft Agreement Framework
+A numbered skeleton of the communiqué/treaty text you will push into drafting (Preamble framing; 4-6 operative clauses naming parties + mechanisms + timelines; implementation & review body; dispute-resolution clause; entry-into-force). Written so it can be read aloud verbatim at the table. Ground mechanisms in real treaty practice (cite analogs from the digest).
+### Diplomatic Phrasebook
+10-14 ready-to-say lines grouped under bold labels: **Openers**, **Framing a concession**, **Defusing tension**, **Firm pushback without hostility**, **Buying time**, **Closing the deal**. Adapt each line to THIS scenario (mention the issue and parties), keep each line 1-2 sentences — things a delegate actually says.""",
+    },
+    {
+        "key": "quick_reference",
+        "number": "7",
+        "title": "One-Page Quick Reference Card",
+        "word_min": 220, "word_max": 320,
+        "guidance": """Everything the negotiator glances at in the last 30 seconds. Tight bullets only, no prose paragraphs:
+- **Your 5 priorities** (in order)
+- **5 killer numbers to quote** — each with year and source from the digest
+- **Your 3 red lines**
+- **Opening line** (one sentence, verbatim)
+- **Closing line** (one sentence, verbatim)
+- **If you forget everything else**: the single rule for this room.""",
+    },
+]
+
+SECTION_ORDER_NOTE = (
+    "The judges value consensus-building, realistic and implementable agreements, "
+    "creative problem-solving, adaptability and professional diplomatic conduct. "
+    "Weight your advice accordingly."
+)
+
+
+def _brief_block(meta: NegoMeta, analysis: dict) -> str:
+    parties = ", ".join(analysis.get("parties", []) or [])
+    return f"""\
+SCENARIO BRIEF (raw):
+\"\"\"
+{meta.brief_text[:5000]}
+\"\"\"
+
+DERIVED ANALYSIS:
+- Title: {analysis.get('title')}
+- Summary: {analysis.get('summary')}
+- Issue areas: {', '.join(analysis.get('issue_areas', []) or [])}
+- Parties: {meta.other_parties or parties}
+- Your side: {meta.your_stakeholder or analysis.get('your_side_hint', 'the assigned stakeholder')}
+- Stakes: {analysis.get('stakes')}
+- Real-world analogs: {', '.join(analysis.get('real_world_analogs', []) or []) or 'none identified'}
+- Region: {meta.region}
+- Round: {meta.round_name or 'not specified'} | Time limit: {meta.time_limit or 'not specified'}
+"""
+
+
+def write_playbook_section(
+    spec: dict,
+    meta: NegoMeta,
+    analysis: dict,
+    digest: str,
+    prior: list[str],
+    llm,
+    word_multiplier: float = 1.0,
+) -> str:
+    wmin = int(spec["word_min"] * word_multiplier)
+    wmax = int(spec["word_max"] * word_multiplier)
+    prior_txt = ""
+    if prior:
+        joined = "\n\n".join(p[:1200] for p in prior)
+        prior_txt = f"\n\nEARLIER SECTIONS (excerpts — build on them, cross-reference, never repeat):\n{joined}"
+    prompt = f"""{STYLE_GUIDE}
+
+{NEG_VOICE}
+
+{SECTION_ORDER_NOTE}
+
+You are writing SECTION {spec['number']} — "{spec['title']}" — of the playbook. Write only this section.
+
+{_brief_block(meta, analysis)}
+
+EVIDENCE DIGEST (cite ONLY these, using their citation keys):
+{digest}
+{prior_txt}
+
+SECTION REQUIREMENTS (follow exactly):
+{spec['guidance']}
+
+FORMAT
+- Begin with exactly this line and nothing before it: ## {spec['number']}. {spec['title']}
+- Then the content: {wmin}-{wmax} words.
+Write the section now."""
+    raw = llm.generate(prompt, temperature=0.6, max_output_tokens=16384)
+    body = raw.strip()
+    if body.lstrip().startswith("#"):
+        body = "\n".join(body.splitlines()[1:]).strip()
+    return f"## {spec['number']}. {spec['title']}\n\n{body}"
+
+
+# --------------------------------------------------------------------------
+# Practice scenario generator
+# --------------------------------------------------------------------------
+
+DIFFICULTY_PROFILES = {
+    "Preliminary (bilateral, one issue)": "Bilateral or regional dispute, ONE core issue (e.g. water-sharing revision), 2 stakeholders, clear objectives, moderate data, no hidden crises.",
+    "Quarterfinal (multi-dimensional)": "One dispute touching 2-3 dimensions (e.g. economics + environment + public health), 3-4 parties at the table, some asymmetric information.",
+    "Semifinal (complex transnational)": "Multi-country transnational challenge, 3 interlocking issue areas, each side carries a hidden private constraint that pressures them (stated only in their confidential brief), one mid-round crisis inject the briefs hint at.",
+    "Grand Final (integrated global crisis)": "Integrated crisis spanning political, economic, humanitarian, environmental AND security domains simultaneously, 4+ stakeholders, high uncertainty, secrets per side, and a structured crisis-development sequence.",
+}
+
+CATEGORIES = [
+    "Cross-border resource management (water / fisheries / shared pollution / renewable energy / health cooperation)",
+    "Transnational security & resource governance (critical minerals / AI governance / cybersecurity / infrastructure threats)",
+    "Complex crisis management (humanitarian emergency / disaster response / maritime crisis / environmental incident)",
+    "Multi-domain global summit (climate + inequality + migration + energy + finance + development)",
+]
+
+_DESIGN_PROMPT = """You design negotiation scenarios for a diplomatic competition.
+
+Category: {category}
+Difficulty profile: {difficulty}
+Region flavour: {region}
+
+Invent a realistic, self-contained scenario (fictional countries/actors are fine; keep it plausible and politically tasteful — no real ongoing wars).
+
+Respond with ONLY minified JSON:
+{{
+ "title": "evocative scenario title, max 12 words",
+ "setting": "where/when this takes place (1-2 sentences)",
+ "background": "the situation in 3-4 sentences",
+ "core_dispute": "the central conflict in 1-2 sentences",
+ "team_a": {{"stakeholder": "who Team A represents", "public_position": "their public stance", "pressure": "their key vulnerability"}},
+ "team_b": {{"stakeholder": "who Team B represents", "public_position": "their public stance", "pressure": "their key vulnerability"}},
+ "extra_parties": ["0-3 other actors present or invoked"],
+ "issue_dimensions": ["the 1-5 policy dimensions, matching the difficulty profile"],
+ "crisis_inject": "a plausible mid-round twist revealed later (or empty if difficulty is Preliminary)",
+ "agreement_space": "what a good deal plausibly looks like (2 sentences, judges' eyes only)"
+}}"""
+
+
+def design_practice_scenario(category: str, difficulty: str, region: str, llm) -> dict:
+    prompt = _DESIGN_PROMPT.format(
+        category=category, difficulty=DIFFICULTY_PROFILES[difficulty], region=region
+    )
+    data = llm.generate_json(prompt, max_output_tokens=8192)
+    return data
+
+
+def _stringify(value) -> str:
+    if isinstance(value, (list, tuple)):
+        return " | ".join(str(v) for v in value)
+    return str(value)
+
+
+def write_shared_brief(design: dict, difficulty: str, digest: str, llm) -> str:
+    prompt = f"""{STYLE_GUIDE}
+
+Write the SHARED MATCH BRIEF handed to BOTH teams at round start. This is the neutral, public document.
+
+SCENARIO DESIGN:
+{_stringify(design)[:2500]}
+Difficulty: {difficulty}
+
+GROUNDING (real-world facts you may weave in for authenticity, with citations in the form (Source, year)):
+{digest[:6000] if digest else "(none — rely on fictional but plausible figures and mark them as scenario data)"}
+
+STRUCTURE (use these markdown headings):
+## Match Brief — [scenario title]
+### 1. The Setting (where, when, who convenes the table)
+### 2. Background (how we got here — 4-6 sentences, concrete numbers)
+### 3. The Current Crisis/Dispute (what must be settled today)
+### 4. The Parties at the Table
+### 5. Format & Rules (time limit, that a joint communiqué is expected, that winners advance)
+
+Keep it 450-650 words, immersive but factual in tone — like a real summit brief."""
+    raw = llm.generate(prompt, temperature=0.65, max_output_tokens=8192)
+    body = raw.strip()
+    return body if body.startswith("##") else f"## Match Brief — {design.get('title', 'Practice Scenario')}\n\n{body}"
+
+
+def write_team_brief(design: dict, team_key: str, difficulty: str, digest: str, llm) -> str:
+    t = design.get(team_key, {}) or {}
+    label = "Team A" if team_key == "team_a" else "Team B"
+    title = f"Confidential Brief — {label}: {t.get('stakeholder', 'Stakeholder')}"
+    prompt = f"""{STYLE_GUIDE}
+
+Write a CONFIDENTIAL brief handed ONLY to {label}: {t.get('stakeholder')}.
+
+SCENARIO: {design.get('title')} — {_stringify(design.get('background', ''))}
+Core dispute: {_stringify(design.get('core_dispute', ''))}
+This side's public position: {_stringify(t.get('public_position', ''))}
+This side's private pressure/vulnerability: {_stringify(t.get('pressure', ''))}
+Difficulty: {difficulty}
+Crisis inject (if any): {_stringify(design.get('crisis_inject', 'none'))}
+Real-world grounding (cite as (Source, year) where used):
+{digest[:4000] if digest else '(none)'}
+
+Produce a confidential brief, 350-550 words, with markdown headings:
+### Your Mandate (2-3 sentences of flavour)
+### Your Objectives (4-6, ranked — mix of public demands and private needs)
+### Intelligence on the Other Side (what you suspect about them — 3-4 bullets)
+### Your Pressure Points (why you must reach a deal; what failure costs you)
+### Hidden Constraints (1-2 secrets you must not reveal early)
+### Winning Looks Like (a one-line definition of a victory you can sell at home)
+
+Write with tension and texture — this should feel like being handed the real file."""
+    raw = llm.generate(prompt, temperature=0.65, max_output_tokens=8192)
+    note = raw.strip()
+    return ("" if note.startswith("##") else f"## {title}\n\n") + note
+
+
+def write_judge_note(design: dict, llm) -> str:
+    prompt = f"""{STYLE_GUIDE}
+
+Write the JUDGE'S NOTE for this practice match (seen only after the match).
+
+Scenario: {design.get('title')}
+Core dispute: {_stringify(design.get('core_dispute', ''))}
+Agreement space: {_stringify(design.get('agreement_space', ''))}
+
+Produce markdown, 300-450 words:
+### What a Strong Deal Looks Like (the plausible consensus zone, 3-5 clauses with rough content)
+### Likely Traps (2-3 ways teams waste the round)
+### Scoring Rubric (markdown table: Criterion | Weight | What excellent looks like — with criteria Consensus-building, Realism & implementability, Argumentation & evidence, Adaptability & crisis handling, Diplomatic conduct; weights summing to 100%)"""
+    raw = llm.generate(prompt, temperature=0.5, max_output_tokens=8192)
+    note = raw.strip()
+    return ("" if note.startswith("##") else "## Judge's Solution Note\n\n") + note
+
+
+# --------------------------------------------------------------------------
+# Assembly
+# --------------------------------------------------------------------------
+
+def assemble_playbook_markdown(meta: NegoMeta, sections_md: list[str], sources: list[Source]) -> tuple[str, int]:
+    body_words = sum(word_count(s) for s in sections_md)
+    meta.word_count = body_words
+    kw = ", ".join(meta.keywords) if meta.keywords else meta.title_or_default()
+    cover = f"""# {meta.title_or_default()} — Negotiation Playbook
+
+**Scenario:** {meta.title_or_default()}
+**Your Stakeholder:** {meta.your_stakeholder or '—'}
+**Other Parties:** {meta.other_parties or '—'}
+**Round:** {meta.round_name or '—'}
+**Team:** {meta.team_members or '—'}
+**Institution:** {meta.institution or '—'}
+**Time Limit:** {meta.time_limit or '—'}
+**Keywords:** {kw}
+
+> Game plan: read Section 1 and Section 7 if time is short; the rest when you can.
+
+---
+
+"""
+    parts = [cover, *sections_md]
+    if sources:
+        parts.append(build_references(sources).markdown)
+    return "\n\n".join(p.strip() for p in parts) + "\n", body_words
+
+
+def assemble_practice_markdown(shared: str, brief_a: str, brief_b: str, judge: str) -> str:
+    separator_a = "\n\n---\n\n*🔒 CONFIDENTIAL — for Team A only. Do not show the opposing team.*\n\n"
+    separator_b = "\n\n---\n\n*🔒 CONFIDENTIAL — for Team B only. Do not show the opposing team.*\n\n"
+    separator_j = "\n\n---\n\n*⚖️ JUDGES ONLY — read after the match concludes.*\n\n"
+    return f"{shared.strip()}{separator_a}{brief_a.strip()}{separator_b}{brief_b.strip()}{separator_j}{judge.strip()}\n"
