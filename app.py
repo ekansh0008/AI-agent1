@@ -9,6 +9,8 @@ Modes:
 
 from __future__ import annotations
 
+import os
+
 import streamlit as st
 
 from src.config import DEPTH_PRESETS, DEFAULT_MODEL, PaperMeta
@@ -48,16 +50,43 @@ for key, default in (
     st.session_state.setdefault(key, default)
 
 
-def _default_key() -> str:
-    from src.config import env_api_key as _env
-
-    key = _env()
-    if key:
-        return key
+def _secret(name: str) -> str:
+    """Read a config value from Streamlit secrets or the environment."""
     try:
-        return st.secrets.get("GEMINI_API_KEY", "")
-    except Exception:  # noqa: BLE001 - no secrets.toml present
-        return ""
+        val = st.secrets.get(name, "")
+    except Exception:  # noqa: BLE001 - no secrets.toml locally
+        val = ""
+    if not val:
+        val = os.getenv(name, "")
+    return (val or "").strip()
+
+
+def _shared_key() -> str:
+    return _secret("GEMINI_API_KEY")
+
+
+def _gate() -> None:
+    """Optional PIN lock for public deployments.
+
+    If APP_PIN is set in secrets/env, visitors must enter it first, so a public
+    link can't be abused by strangers (protects the shared API quota).
+    """
+    required = _secret("APP_PIN")
+    if not required or st.session_state.get("pin_ok"):
+        return
+    st.title("🌍 Policy + Negotiation Agent")
+    st.caption("This app is shared privately. Enter the access PIN to continue.")
+    pin = st.text_input("Access PIN", type="password")
+    if not pin:
+        st.stop()
+    if pin != required:
+        st.error("Galat PIN. Ask the owner for the correct one.")
+        st.stop()
+    st.session_state.pin_ok = True
+    st.rerun()
+
+
+_gate()
 
 
 # --------------------------------------------------------------------------
@@ -69,10 +98,20 @@ with st.sidebar:
     st.divider()
 
     st.subheader("🔑 Gemini API")
-    st.markdown("Free key: [Google AI Studio](https://aistudio.google.com/apikey)")
-    api_key = st.text_input(
-        "API key", value=_default_key(), type="password", placeholder="AIza..."
-    )
+    api_key = _shared_key()
+    if api_key:
+        # Shared server-side key is active (public deployment) — visitors need
+        # nothing, and the key is NEVER rendered into the page.
+        st.success("Shared key active — koi key daalne ki zaroorat nahi. ✅", icon="🔓")
+        with st.expander("Apni key use karni hai? (optional)"):
+            custom = st.text_input("API key override", type="password", placeholder="AIza...")
+            if custom.strip():
+                api_key = custom.strip()
+    else:
+        st.markdown("Free key: [Google AI Studio](https://aistudio.google.com/apikey)")
+        api_key = st.text_input(
+            "API key", type="password", placeholder="AIza..."
+        )
     model = st.text_input(
         "Model",
         value=DEFAULT_MODEL,

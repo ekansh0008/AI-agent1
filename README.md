@@ -111,6 +111,26 @@ outputs/                generated papers land here (git-ignored)
 
 ---
 
+## 🌐 Publish it (share a public link)
+
+Deploy free on **Streamlit Community Cloud** so anyone can use the app in their
+browser — no install needed:
+
+1. Go to [share.streamlit.io](https://share.streamlit.io) → sign in with GitHub.
+2. **Create app** → repo `ekansh0008/AI-agent1`, branch `arena/019fb242-ai-agent1`,
+   main file `app.py` → **Deploy** (2-3 min).
+3. Open the app's **Settings → Secrets** and paste:
+   ```toml
+   GEMINI_API_KEY = "your-key-here"     # visitors won't need any key
+   APP_PIN = "choose-a-simple-pin"      # optional: only people with this PIN can use it
+   ```
+4. Share the generated link (and PIN, if set) — done. ✅
+
+Notes: secrets live only on the deployment server (never committed to git). A
+shared key shares your free Gemini daily quota — the PIN gate keeps strangers out.
+If you'd rather not share your key, skip the secrets: each visitor then pastes
+their own free key in the sidebar.
+
 ## ⚙️ Tips
 
 - **Deeper research** — pick *Deep research* in the sidebar for more queries,
