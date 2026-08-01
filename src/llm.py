@@ -15,22 +15,36 @@ class LLMError(RuntimeError):
     pass
 
 
-_SKIP_MODEL_PARTS = ("image", "tts", "embed", "aqa", "robotics", "computer", "live")
+_SKIP_MODEL_PARTS = (
+    "image", "tts", "embed", "aqa", "robotics", "computer", "live",
+    "omni", "custom", "gemma", "nano", "exp-", "veo", "imagen",
+)
+
+
+def _model_version(name: str) -> float:
+    m = re.search(r"gemini-(\d+(?:\.\d+)?)", name.lower())
+    return float(m.group(1)) if m else 0.0
 
 
 def _rank_models(names: list[str]) -> list[str]:
-    """Prefer text-generation Gemini models, newest-looking first (flash > pro
-    so we stay inside free-tier quotas)."""
-    cleaned = []
+    """Prefer text-generation Gemini models, newest version first (flash then
+    pro so we stay inside free-tier quotas). Oddball models (omni, robotics,
+    image, custom…) go to the very bottom instead of being dropped, so we
+    always have some fallback."""
+    cleaned, weird = [], []
     for n in names:
         nl = n.lower()
-        if "gemini" not in nl or any(part in nl for part in _SKIP_MODEL_PARTS):
+        if "gemini" not in nl:
             continue
-        cleaned.append(n)
-    flashes = sorted((n for n in cleaned if "flash" in n.lower()), reverse=True)
-    pros = sorted((n for n in cleaned if "pro" in n.lower() and n not in flashes), reverse=True)
-    others = sorted(n for n in cleaned if n not in flashes and n not in pros)
-    return flashes + pros + others
+        (weird if any(part in nl for part in _SKIP_MODEL_PARTS) else cleaned).append(n)
+
+    def sort_bucket(bucket: list[str]) -> list[str]:
+        return sorted(bucket, key=lambda n: (-_model_version(n), n))
+
+    flashes = [n for n in cleaned if "flash" in n.lower()]
+    pros = [n for n in cleaned if "pro" in n.lower() and n not in flashes]
+    others = [n for n in cleaned if n not in flashes and n not in pros]
+    return sort_bucket(flashes) + sort_bucket(pros) + sort_bucket(others) + sort_bucket(weird)
 
 
 def _list_models(client) -> list[str]:
@@ -114,20 +128,36 @@ class LLMClient:
                 last_err = exc
                 msg = str(exc)
                 msg_low = msg.lower()
-                # Model renamed/retired for this key? Discover what IS available
-                # and switch automatically instead of failing.
-                if (
-                    ("NOT_FOUND" in msg or "not found" in msg_low or "404" in msg)
-                    and not self._tried_model_discovery
-                ):
+                # Model unusable for this key? (renamed/retired, OR zero free
+                # quota, e.g. "limit: 0") Discover available models and switch
+                # automatically instead of hammering a dead model.
+                unusable = (
+                    "NOT_FOUND" in msg
+                    or "not found" in msg_low
+                    or "404" in msg
+                    or "limit: 0" in msg_low
+                    or '"limit": 0' in msg_low
+                )
+                if unusable and not self._tried_model_discovery:
                     self._tried_model_discovery = True
                     try:
                         discovered = _list_models(self.client)
                     except Exception:  # noqa: BLE001
                         discovered = []
-                    if discovered:
-                        self.model = discovered[0]
-                        continue  # retry with the discovered model
+                    switched = False
+                    for candidate in discovered:
+                        if candidate != self.model:
+                            self.model = candidate
+                            switched = True
+                            break
+                    if not switched:
+                        raise LLMError(
+                            "No usable Gemini model found for this API key: "
+                            f"'{self.model}' failed and Google's model list offered "
+                            "no better alternative. Try again in a minute, or paste "
+                            "a different (free) Gemini key in the sidebar."
+                        ) from exc
+                    continue  # retry with the discovered model
                 transient = any(
                     token in msg_low
                     for token in (
