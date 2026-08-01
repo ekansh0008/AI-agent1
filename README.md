@@ -1,22 +1,30 @@
-# 🌍 SDG Policy Paper + Diplomatic Negotiation Agent
+# 🤝 Diplomatic Negotiation Agent
 
-One app, two competition modes (switch in the UI):
+A negotiation-prep agent for the **Diplomatic Negotiation Challenge**: paste the
+on-the-spot scenario brief (2 lines or 2 pages — both fine) and get a compact
+**1-2 page game plan** in simple English. Everything is automatic — the app picks
+the best AI model for your key, writes in grade-5-simple language, and fits the
+whole strategy on one printout.
 
-## 🤝 Mode 1: Diplomatic Negotiation (Diplomatic Negotiation Challenge)
+## Two tabs
 
-**⚡ Tab 1 — Negotiation points from a brief** — paste the round's scenario brief
-(released only at round start) plus your stakeholder role → get a compact
-**1-2 page negotiation document** in about a minute:
+**⚡ Negotiation points from a brief** — paste the round's brief → get:
 
 - the situation in 3 lines · both sides' fundamentals · **your red lines**
 - **the 4-5 points of negotiation** in a point-by-point table (you open here /
   they open there / landing zone)
-- **the 4-5 final agreement points** to steer toward — concrete, signable clauses
+- **the 4-5 final agreement points** — concrete, signable clauses
 - opening & closing lines to say at the table
 
-**🎲 Tab 2 — Practice generator** — pick a category + difficulty → get **2-3 short
+Short briefs are expanded with clearly stated assumptions; long briefs are
+distilled to the essentials. Ready in about a minute.
+
+**🎲 Practice generator** — pick a category + difficulty → get **2-3 short
 practice topics** (2-3 lines each) → choose one → the same kind of **1-2 page
-negotiation document** to print and rehearse with your 2-person team.
+negotiation document** to rehearse with your 2-person team.
+
+*(An SDG policy-paper mode used to be part of this app; its engine remains in
+`src/` but is no longer exposed in the UI.)*
 
 ## 📄 Mode 2: SDG Policy Paper
 
