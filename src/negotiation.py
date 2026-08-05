@@ -541,10 +541,11 @@ After each point's deal text, add one short line: "→ why this works:" followed
 - **Opening line:** one diplomatic sentence that frames the room
 - **Closing line:** one sentence to lock the deal
 
-### Concluding statement (learn by heart and say at the end)
-5-6 short spoken lines in simple English, ready to say out loud:
+### Concluding statement (learn by heart and say at the end — about 1 minute long)
+A spoken statement of roughly 120-150 words (8-10 short lines) that takes about
+1 minute to say out loud. Count the words and stay inside 120-150. In simple English:
 1. thank the other side and the judges,
-2. restate the 4-5 agreed points in one or two lines,
+2. restate the 4-5 agreed points in 2-3 lines,
 3. say — respectfully but clearly — that OUR side drove the result: we came with solutions, we protected our people's needs, and we still met the other side halfway,
 4. end with one confident line about friendship, balance and lasting peace.
 
@@ -677,8 +678,8 @@ A markdown table with EXACTLY these columns and 4-5 rows (each row = one negotia
 ### The final agreement — the 4-5 points that get signed
 4-5 numbered points. Each point = a **bold lead-in** + 1-2 concrete sentences stating what the two sides actually agree on — who does what, by when, with what mechanism, and the numbers involved. Specific and signable, not vague aspirations. Together they must balance wins for BOTH sides. End each point with: "→ why this works:" and one short simple line of logic (cause and effect) — this shows the critical thinking judges score first.
 
-### Concluding statement (for both teams)
-- A 4-5 line spoken template in simple English that EITHER team can say at the end: thank the other side and the judges; restate the deal in one line; say why OUR side stayed the most constructive and pushed the best solutions; close with one confident line about the future.
+### Concluding statement (for both teams — about 1 minute long)
+- A spoken statement of roughly 120-150 words (takes about 1 minute to say) that EITHER team can adapt and speak at the end: thank the other side and the judges; restate the deal in 2-3 lines; say why OUR side stayed the most constructive and pushed the best solutions; close with one confident line about the future.
 - Then two short lines:
   - **Team A's strongest "we were better" argument:** one line of simple logic
   - **Team B's strongest "we were better" argument:** one line of simple logic
