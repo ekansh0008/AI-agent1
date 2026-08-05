@@ -168,7 +168,7 @@ class LLMClient:
                 )
                 if not transient or attempt == max_retries - 1:
                     raise
-                wait = min(8 * (2 ** attempt), 90)
+                wait = min(4 * (2 ** attempt), 30)
                 time.sleep(wait)
         raise LLMError(f"Gemini request failed after retries: {last_err}")
 

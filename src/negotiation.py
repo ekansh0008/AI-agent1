@@ -584,7 +584,7 @@ def write_compact_playbook(meta: NegoMeta, llm) -> str:
         time_short=time_short,
         spec_block=spec_block,
     )
-    raw = llm.generate(prompt, temperature=0.55, max_output_tokens=6144)
+    raw = llm.generate(prompt, temperature=0.55, max_output_tokens=2048)
     body = raw.strip()
     if not body.startswith("##"):
         body = f"## {title_line}\n\n{body}"
@@ -619,7 +619,7 @@ def suggest_practice_topics(category: str, difficulty: str, region: str, llm) ->
         region=region,
     )
     try:
-        data = llm.generate_json(prompt, max_output_tokens=4096)
+        data = llm.generate_json(prompt, max_output_tokens=1536)
         ideas = [
             {k: str(v).strip() for k, v in idea.items()}
             for idea in data.get("ideas", [])
@@ -701,7 +701,7 @@ def write_compact_practice_doc(idea: dict, category: str, difficulty: str, regio
         region=region,
         category_short=category.split("(")[0].strip(),
     )
-    raw = llm.generate(prompt, temperature=0.6, max_output_tokens=6144)
+    raw = llm.generate(prompt, temperature=0.6, max_output_tokens=2048)
     body = raw.strip()
     if not body.startswith("##"):
         body = f"## {idea.get('title', 'Practice Negotiation')}\n\n{body}"

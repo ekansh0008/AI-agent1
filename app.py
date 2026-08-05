@@ -269,7 +269,7 @@ with tab_play:
                 agreement_spec=agreement_spec,
                 topic=brief.strip()[:80],
             )
-            status_box = st.status("Building your negotiation points…", expanded=True)
+            status_box = st.status("Building your negotiation points… (⏱️ ~20-40 sec — free model, thoda wait normal hai)", expanded=True)
             result = None
             try:
                 for event_ in run_compact_playbook(meta, api_key.strip(), model):
@@ -315,7 +315,7 @@ with tab_prac:
         else:
             from src.llm import LLMClient
 
-            with st.spinner("Thinking up practice scenarios…"):
+            with st.spinner("Thinking up practice scenarios… (~10-20 sec)"):
                 try:
                     ideas = suggest_practice_topics(
                         category, difficulty, REGION_DEFAULT,
@@ -350,7 +350,7 @@ with tab_prac:
         if gen_clicked:
             idx = options.index(choice) if choice in options else 0
             idea = pack["ideas"][idx]
-            status_box = st.status("Writing your negotiation document…", expanded=True)
+            status_box = st.status("Writing your negotiation document… (⏱️ ~20-40 sec)", expanded=True)
             result = None
             try:
                 for event_ in run_compact_practice(
